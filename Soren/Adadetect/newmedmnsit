@@ -1,0 +1,208 @@
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+import matplotlib.pyplot as plt
+
+import medmnist
+from medmnist import INFO
+
+# =========================
+# FDP / TDP
+# =========================
+def get_fdp(ytrue, rejection_set):
+    if len(rejection_set):
+        fdp = np.sum(ytrue[rejection_set] == 0) / len(rejection_set)
+        tdp = np.sum(ytrue[rejection_set] == 1) / np.sum(ytrue == 1)
+    else:
+        fdp, tdp = 0, 0
+    return fdp, tdp
+
+
+# =========================
+# BH procedure (standard)
+# =========================
+def BH(pvals, alpha):
+    m = len(pvals)
+    idx = np.argsort(pvals)
+    sorted_p = pvals[idx]
+
+    thresh = alpha * np.arange(1, m+1) / m
+    below = sorted_p <= thresh
+
+    if not np.any(below):
+        return np.array([], dtype=int)
+
+    k = np.max(np.where(below))
+    return idx[:k+1]
+
+
+# =========================
+# CNN (feature extractor)
+# =========================
+class ConvNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 16, 3), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(16, 32, 3), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Flatten(),
+            nn.Linear(32*5*5, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+# =========================
+# One-class trainer
+# =========================
+class OneClassModel:
+    def __init__(self, model, epochs=5):
+        self.model = model
+        self.optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        self.epochs = epochs
+
+    def fit(self, dataset):
+        loader = DataLoader(dataset, batch_size=64, shuffle=True)
+
+        for _ in range(self.epochs):
+            for x, _ in loader:
+                logits = self.model(x)
+                loss = torch.mean(logits**2)  # keep outputs near 0
+                loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+    def score(self, dataset):
+        loader = DataLoader(dataset, batch_size=len(dataset), shuffle=False)
+        with torch.no_grad():
+            for x, _ in loader:
+                return self.model(x).numpy().flatten()
+
+
+# =========================
+# Dataset wrapper
+# =========================
+class custom_subset(Dataset):
+    def __init__(self, dataset, indices, labels):
+        self.dataset = torch.utils.data.Subset(dataset, indices)
+        self.targets = labels[indices]
+
+    def __getitem__(self, idx):
+        x = self.dataset[idx][0]
+        y = self.targets[idx]
+        return x, y
+
+    def __len__(self):
+        return len(self.targets)
+
+
+# =========================
+# Conformal p-values
+# =========================
+def conformal_pvalues(calib_scores, test_scores):
+    n = len(calib_scores)
+    pvals = []
+
+    for s in test_scores:
+        p = (1 + np.sum(calib_scores >= s)) / (n + 1)
+        pvals.append(p)
+
+    return np.array(pvals)
+
+
+# =========================
+# Load ChestMNIST
+# =========================
+data_flag = 'chestmnist'
+info = INFO[data_flag]
+DataClass = getattr(medmnist, info['python_class'])
+
+data = DataClass(split='train', transform=transforms.ToTensor(), download=True)
+
+labels = torch.tensor(data.labels)
+binary_labels = (labels.sum(dim=1) > 0).long()
+
+inlr = (binary_labels == 0).nonzero(as_tuple=True)[0]
+outlr = (binary_labels == 1).nonzero(as_tuple=True)[0]
+
+print("Healthy:", len(inlr), "Diseased:", len(outlr))
+
+
+# =========================
+# Settings
+# =========================
+alpha = 0.1
+test_size = 1000
+null_prop = 0.9
+
+n_inlr = int(test_size * null_prop)
+n_outlr = test_size - n_inlr
+
+calib_size = 1000
+train_size = 3000
+n_runs = 5
+
+fdp_list, tdp_list = [], []
+
+
+# =========================
+# Main loop
+# =========================
+for _ in range(n_runs):
+
+    # Test (mixture)
+    test_idx = np.concatenate([
+        np.random.choice(inlr, n_inlr, replace=False),
+        np.random.choice(outlr, n_outlr, replace=False)
+    ])
+
+    remaining = np.setdiff1d(inlr, test_idx)
+    np.random.shuffle(remaining)
+
+    calib_idx = remaining[:calib_size]
+    train_idx = remaining[calib_size:calib_size+train_size]
+
+    train_ds = custom_subset(data, train_idx, binary_labels)
+    calib_ds = custom_subset(data, calib_idx, binary_labels)
+    test_ds = custom_subset(data, test_idx, binary_labels)
+
+    # Train
+    model = ConvNet()
+    oc = OneClassModel(model)
+    oc.fit(train_ds)
+
+    # Scores
+    calib_scores = oc.score(calib_ds)
+    test_scores = oc.score(test_ds)
+
+    # Convert → p-values
+    pvals = conformal_pvalues(calib_scores, test_scores)
+
+    # Apply BH
+    rejections = BH(pvals, alpha)
+
+    # Evaluate
+    y_true = binary_labels[test_idx].numpy()
+    fdp, tdp = get_fdp(y_true, rejections)
+
+    fdp_list.append(fdp)
+    tdp_list.append(tdp)
+
+
+print("FDP:", np.mean(fdp_list), np.std(fdp_list))
+print("TDP:", np.mean(tdp_list), np.std(tdp_list))
+
+
+# =========================
+# Debug visualization
+# =========================
+plt.hist(calib_scores, bins=50, alpha=0.5, label='null')
+plt.hist(test_scores, bins=50, alpha=0.5, label='test')
+plt.legend()
+plt.title("Score distributions")
+plt.show()
