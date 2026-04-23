@@ -142,24 +142,19 @@ class custom_subset(Dataset):
 
 
 # =========================
-# Load ChestMNIST Binary
+# Load MedMNIST
 # =========================
-data_flag = 'chestmnist'
+data_flag = 'pathmnist'
 info = INFO[data_flag]
 DataClass = getattr(medmnist, info['python_class'])
 
 transform = transforms.ToTensor()
 train_data = DataClass(split='train', transform=transform, download=True)
 
-# ChestMNIST has 14 labels - convert to binary by checking if any disease is present
-all_labels = torch.tensor(train_data.labels).squeeze()
-# Create binary label: 0 = no diseases, 1 = at least one disease
-targets = (all_labels.sum(dim=1) > 0).long() if len(all_labels.shape) > 1 else all_labels
+targets = torch.tensor(train_data.labels).squeeze()
 
 print("Dataset size:", len(train_data))
 print("Image shape:", train_data[0][0].shape)
-print("Binary target shape:", targets.shape)
-print("Class distribution - Healthy:", (targets == 0).sum().item(), "Diseased:", (targets == 1).sum().item())
 
 
 # =========================
@@ -171,7 +166,7 @@ outlr_labels = [1]
 inlr = (targets[..., None] == torch.tensor(inlr_labels)).any(-1).nonzero(as_tuple=True)[0]
 outlr = (targets[..., None] == torch.tensor(outlr_labels)).any(-1).nonzero(as_tuple=True)[0]
 
-print("Class 0 (inliers):", len(inlr), "Class 1 (outliers):", len(outlr))
+print("Nulls:", len(inlr), "Outliers:", len(outlr))
 
 
 # =========================
@@ -202,9 +197,7 @@ for i in range(n_runs):
         np.random.choice(outlr, n_outlr, replace=False)
     ])
 
-    # Use TRUE labels for test (mix of 0s and 1s)
-    test_true_labels = torch.cat([torch.zeros(n_inlr), torch.ones(n_outlr)])
-    test_dataset = custom_subset(train_data, test_idx, test_true_labels)
+    test_dataset = custom_subset(train_data, test_idx, torch.ones(test_size))
 
     # Train / calibration split
     train_idx = np.setdiff1d(inlr, test_idx)
@@ -213,31 +206,25 @@ for i in range(n_runs):
     calib_idx = train_idx[:calib_size]
     train_idx2 = train_idx[calib_size:calib_size+train_size]
 
-    # Use TRUE labels for training (all healthy=0) and calibration (all healthy=0)
-    calib_dataset = custom_subset(train_data, calib_idx, torch.zeros(calib_size))
+    calib_dataset = custom_subset(train_data, calib_idx, torch.ones(calib_size))
     train_dataset = custom_subset(train_data, train_idx2, torch.zeros(train_size))
-    
-    # Add diseased samples to training for better discrimination
-    diseased_train_idx = np.random.choice(outlr, min(train_size // 2, len(outlr)), replace=False)
-    diseased_train = custom_subset(train_data, diseased_train_idx, torch.ones(len(diseased_train_idx)))
 
-    full_train = ConcatDataset([train_dataset, diseased_train, calib_dataset])
+    full_train = ConcatDataset([train_dataset, calib_dataset, test_dataset])
 
     # Model
     n_channels = train_data[0][0].shape[0]
     model = BinaryConvNet(n_channels)
-    clf = NNClassifier(model, n_epochs=15)
+    clf = NNClassifier(model)
 
     clf.fit(full_train)
 
-    # Scores: higher score = more likely diseased
-    # Null distribution from healthy calibration samples
-    null_scores = clf.predict_proba(calib_dataset)
+    # Scores
     test_scores = clf.predict_proba(test_dataset)
+    null_scores = clf.predict_proba(calib_dataset)
 
     rej_set = EmpBH(null_scores, test_scores, level=level)
 
-    # True labels for evaluation
+    # True labels
     test_labels = np.concatenate([np.zeros(n_inlr), np.ones(n_outlr)])
 
     fdp[i], tdp[i] = get_fdp(test_labels, rej_set)
@@ -265,13 +252,13 @@ grid_outliers = ImageGrid(fig, 211, nrows_ncols=(2, 5), axes_pad=0.05)
 images_rej = [test_dataset[i][0].permute(1,2,0).numpy() for i in sample_rej]
 
 for ax, idx, im in zip(grid_outliers, sample_rej, images_rej):
-    ax.imshow(im, cmap='gray')
+    ax.imshow(im)
     # Check if correctly classified (true positive)
     is_correct = test_labels[idx] == 1
     if is_correct:
-        ax.set_title('Correct', fontsize=9, color='darkgreen', fontweight='bold')
+        ax.set_title('✓ Correct', fontsize=9, color='darkgreen', fontweight='bold')
     else:
-        ax.set_title('Wrong (FP)', fontsize=9, color='darkred', fontweight='bold')
+        ax.set_title('✗ Wrong (FP)', fontsize=9, color='darkred', fontweight='bold')
     ax.axis('off')
 
 # Section 2: Inliers (Accepted)
@@ -280,16 +267,16 @@ grid_inliers = ImageGrid(fig, 212, nrows_ncols=(2, 7), axes_pad=0.05)
 images_acc = [test_dataset[i][0].permute(1,2,0).numpy() for i in sample_acc]
 
 for ax, idx, im in zip(grid_inliers, sample_acc, images_acc):
-    ax.imshow(im, cmap='gray')
+    ax.imshow(im)
     # Check if correctly classified (true negative)
     is_correct = test_labels[idx] == 0
     if is_correct:
-        ax.set_title('Correct', fontsize=9, color='darkgreen', fontweight='bold')
+        ax.set_title('✓ Correct', fontsize=9, color='darkgreen', fontweight='bold')
     else:
-        ax.set_title('Wrong (FN)', fontsize=9, color='darkred', fontweight='bold')
+        ax.set_title('✗ Wrong (FN)', fontsize=9, color='darkred', fontweight='bold')
     ax.axis('off')
 
 plt.subplots_adjust(top=0.95, bottom=0.05, hspace=0.4)
-plt.savefig('chestmnist_outlier_detection.png', dpi=150, bbox_inches='tight')
-print("Visualization saved as 'chestmnist_outlier_detection.png'")
+plt.savefig('outliers_visualization.png', dpi=150, bbox_inches='tight')
+print("Visualization saved as 'outliers_visualization.png'")
 plt.show()
