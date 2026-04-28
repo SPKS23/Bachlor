@@ -3,7 +3,10 @@ from scipy.stats import chi2
 from sklearn.model_selection import GridSearchCV, ParameterGrid
 from functools import reduce
 
-from .algo import BH, EmpBH, EmpBH_fast, adaptiveEmpBH
+try:
+    from .algo import BH, EmpBH, EmpBH_fast, adaptiveEmpBH
+except ImportError:
+    from algo import BH, EmpBH, EmpBH_fast, adaptiveEmpBH
     
 
 class AdaDetectBase(object):
