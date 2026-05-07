@@ -1,0 +1,20 @@
+
+Soren/Adadetect/cats_vs_dogs/*.zip
+Soren/Adadetect/*.npz
+Soren/Adadetect/data/*.npz
+
+# datasets
+Soren/Adadetect/data/PetImages/
+Soren/Adadetect/data/*.zip
+Soren/Adadetect/data/*.jpg
+Soren/Adadetect/data/*.jpeg
+Soren/Adadetect/data/*.png
+Soren/Adadetect/data/Thumbs.db
+
+# datasets
+Soren/Adadetect/data/PetImages/
+Soren/Adadetect/data/*.zip
+Soren/Adadetect/data/*.jpg
+Soren/Adadetect/data/*.jpeg
+Soren/Adadetect/data/*.png
+Soren/Adadetect/data/Thumbs.db
