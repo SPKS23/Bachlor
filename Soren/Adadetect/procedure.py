@@ -50,7 +50,7 @@ class AdaDetectBase(object):
             return adaptiveEmpBH(self.null_statistics, self.test_statistics, level = level, 
             correction_type = self.correction_type, storey_threshold = self.storey_threshold)
         else: 
-            return EmpBH_fast(self.null_statistics, self.test_statistics, level = level)
+            return EmpBH(self.null_statistics, self.test_statistics, level = level)
 
 
 class AdaDetectDE(AdaDetectBase):
@@ -159,7 +159,7 @@ class AdaDetectERM(AdaDetectBase):
         self.scoring_fn.fit(x_train, y_train)
 
         # compute scores 
-        methods_list = ["predict_proba", "decision_function"]
+        methods_list = ["decision_function","predict_proba"]
         prediction_method = [getattr(self.scoring_fn, method, None) for method in methods_list]
         prediction_method = reduce(lambda x, y: x or y, prediction_method)
 
