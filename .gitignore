@@ -10,6 +10,7 @@ Soren/Adadetect/data/*.jpg
 Soren/Adadetect/data/*.jpeg
 Soren/Adadetect/data/*.png
 Soren/Adadetect/data/Thumbs.db
+<<<<<<< HEAD
 
 # datasets
 Soren/Adadetect/data/PetImages/
@@ -18,3 +19,5 @@ Soren/Adadetect/data/*.jpg
 Soren/Adadetect/data/*.jpeg
 Soren/Adadetect/data/*.png
 Soren/Adadetect/data/Thumbs.db
+=======
+>>>>>>> 2ec1447a7f3bf342c9859f67f4b4ba36c9d23d2a
